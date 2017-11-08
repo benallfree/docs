@@ -9,7 +9,7 @@ toc::[]
 
 AdonisJs makes it so simple to validate the user's input with the help of dedicated validation provider. In this guide you learn how to validate the data *manually* or via *route validators*.
 
-NOTE: Adonisjs validator using link:http://indicative.adonisjs.com/[indicative, window="_blank"] under the hood, so make sure to read the official documentation whenever required.
+NOTE: Adonisjs validator using link:http://indicative.adonisjs.com/[indicative] under the hood, so make sure to read the official documentation whenever required.
 
 == Setup
 Follow the below instructions to setup the validation provider.
@@ -200,7 +200,7 @@ All we need to do is, define the rules on the validator
 class StoreUser {
   get rules () {
     return {
-      email: 'required|email|unique',
+      email: 'required|email|unique:users',
       password: 'required'
     }
   }
@@ -288,3 +288,134 @@ module.exports = StoreUser
 
 === Request context
 All route validators can access the current request context via `this.ctx`.
+
+== Custom Rules
+AdonisJs supports all the validation rules by Indicative but also adds a few who are specific to AdonisJs only. Below is the list of custom rules.
+
+==== unique(tableName, [fieldName], [ignoreField], [ignoreValue])
+Makes sure a given value is unique in a given database table.
+
+[source, js]
+----
+'use strict'
+
+class StoreUser {
+  get rules () {
+    return {
+      email: 'unique:users,email'
+    }
+  }
+}
+----
+
+When updating the existing user profile, there is no point of checking their email address when enforcing the `unique` rule.
+
+The same can be done by defining an `ignoreField (id)` and `ignoreValue (userId)`.
+
+[source, js]
+----
+class StoreUser {
+  get rules () {
+    const userId = this.ctx.params.id
+
+    return {
+      email: `unique:users,email,id,${userId}`
+    }
+  }
+}
+----
+
+== Extending Validator
+Let's start by adding a rule which makes sure that the *Post* exists when we are adding a new *Comment* to the database. We call it the `exists` rule.
+
+NOTE: The API is same as the link:http://indicative.adonisjs.com/#indicative-extending[Indicative] extend API. It is just you add rules via the `Validator` provider.
+
+=== Application specific
+If your application just uses the rule, then consider adding it to the `start/hooks.js` file.
+
+[source, js]
+----
+const { hooks } = require('@adonisjs/ignitor')
+
+hooks.after.providersBooted(() => {
+  const Validator = use('Validator')
+  const Database = use('Database')
+
+  const existsFn = async (data, field, message, args, get) => {
+    const value = get(data, field)
+    if (!value) {
+      /**
+       * skip validation if value is not defined. `required` rule
+       * should take care of it.
+       */
+      return
+    }
+
+    const [table, column] = args
+    const row = await Database.table(table).where(column, value).first()
+
+    if (!row) {
+      throw message
+    }
+  }
+
+  Validator.extend('exists', existsFn)
+})
+----
+
+Now we can use this rule as follows.
+
+[source, js]
+----
+get rules () {
+  return {
+    post_id: 'exists:posts,id'
+  }
+}
+----
+
+== Via Provider
+If you are planning to bundle this rule and share it with other as an npm module, then consider wrapping the code inside a *provider*.
+
+.Directory structure
+[source, bash]
+----
+.
+└── providers
+    ├── ExistsRuleProvider.js
+----
+
+.ExistsRuleProvider.js
+[source, js]
+----
+const { ServiceProvider } = require('@adonisjs/fold')
+
+class ExistsRuleProvider extends ServiceProvider {
+  existsFn (data, field, message, args, get) {
+    const value = get(data, field)
+    if (!value) {
+      /**
+       * skip validation if value is not defined. `required` rule
+       * should take care of it.
+       */
+      return
+    }
+
+    const [table, column] = args
+
+    const row = await Database.table(table).where(column, value).first()
+    if (!row) {
+      throw message
+    }
+  }
+
+  boot () {
+    const Validator = use('Validator')
+    Validator.extend('exists', this.existsFn.bind(this))
+  }
+}
+
+module.exports = ExistsRuleProvider
+----
+
+The `exists` rule is added to the `Validator` when someone registers your provider to the `providers` array.
